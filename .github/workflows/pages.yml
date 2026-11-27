@@ -1,14 +1,17 @@
 name: Publish Crowbound to GitHub Pages
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
         description: Release tag to publish (for example v2026.11.26.4)
         required: true
         type: string
+      verify_saves:
+        description: Include temporary pages for an isolated Brave restart test
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,7 +35,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           version="${RELEASE_TAG#v}"
           gh release download "$RELEASE_TAG" --pattern "Crowbound_${version}_Web.zip" --output crowbound.zip
@@ -41,6 +44,23 @@ jobs:
           test -s site/index.pck
           test -s site/index.wasm
           grep -q '"args":\[\]' site/index.html
+      - name: Add isolated save test pages
+        if: inputs.verify_saves
+        shell: python
+        run: |
+          from pathlib import Path
+          index = Path('site/index.html').read_text(encoding='utf-8')
+          anchor = 'const engine = new Engine(GODOT_CONFIG);'
+          assert '"args":[]' in index and anchor in index
+          reporter = '''GODOT_CONFIG.onPrint = (line) => {
+            if (line.includes("WEB TEST SAVE WRITE: PASS")) console.error("CROWBOUND_HOSTED_WRITE_PASS");
+            if (line.includes("EXPORT SAVES:")) console.error(line.includes("fresh=true old=true backup=true rebirth=true") ? "CROWBOUND_HOSTED_READ_PASS" : "CROWBOUND_HOSTED_READ_FAIL");
+          };
+          '''
+          for mode in ('write', 'read'):
+              args = f'"args":["--","--hh-test","--hh-web-save-{mode}"]'
+              fixture = index.replace('"args":[]', args).replace(anchor, reporter + anchor)
+              Path(f'site/__save-test-{mode}.html').write_text(fixture, encoding='utf-8')
       - name: Upload the Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
