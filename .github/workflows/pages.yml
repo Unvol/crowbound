@@ -1,0 +1,50 @@
+name: Publish Crowbound to GitHub Pages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (for example v2026.11.26.4)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: crowbound-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Unpack the browser release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          gh release download "$RELEASE_TAG" --pattern "Crowbound_${version}_Web.zip" --output crowbound.zip
+          unzip -q crowbound.zip -d site
+          test -s site/index.html
+          test -s site/index.pck
+          test -s site/index.wasm
+          grep -q '"args":\[\]' site/index.html
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - name: Publish the site
+        id: deployment
+        uses: actions/deploy-pages@v4
